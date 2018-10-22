@@ -2,27 +2,6 @@
 
 PsNee, an open source stealth modchip for the Sony Playstation 1 
 
-                        PPPPPPPPPPPPPPPP                  P            P      
-                       P              P                  PP           P        
-                      P              P                  P P          P        
-                     P              P                  P  P         P          
-                    P              P                  P   P        P          
-                   P              P                  P    P       P            
-                  P              P                  P     P      P            
-                 PPPPPPPPPPPPPPPP  PPPPPPPPPPP     P      P     P  PPPPPPPPPPP  PPPPPPPPPPP
-                P                 P               P       P    P  P            P
-               P                 P               P        P   P  P            P  
-              P                 P               P         P  P  P            P  
-             P                 P               P          P P  P            P    
-            P                 PPPPPPPPPPPPPP  P           PP  PPPPPPP      PPPPPPP    
-           P                              P  P            P  P            P      
-          P                              P  P            P  P            P      
-         P                              P  P            P  P            P        
-        P                              P  P            P  P            P        
-       P                              P  P            P  P            P      
-      P                              P  P            P  P            P        
-     P                   PPPPPPPPPPPP  P            P  PPPPPPPPPPP  PPPPPPPPPPP
-
 ---------------------------------------
 This version is forked from
 https://github.com/kalymos/PsNee
