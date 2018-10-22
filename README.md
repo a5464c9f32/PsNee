@@ -18,9 +18,15 @@ At this time it is untested, but i will test it soon.
 Pin assignments
 
 PlayStation    Name        Attiny
+
 3.5v           = supply    VCC
+
 IC732.Pin-5    = WFCK      PB4     
+
 IC732.Pin-42   = CEO       PB2
+
 IC304.Pin-24   = SUBQ      PB1
+
 IC304.Pin-26   = SQCK      PB0
+
 GND            = gnd       GND
