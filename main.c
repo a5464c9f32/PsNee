@@ -1,4 +1,5 @@
 #define F_CPU 8000000UL
+//#define F_CPU 4166667UL
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -7,7 +8,7 @@
 
 FUSES =
 {
-	.low = 0xE2, //Clock NOT divided by 8 ==> 8MHz
+	.low = 0xE2, //Clock NOT divided by 8 ==> F_CPU = 8MHz
 	.high = 0xDD, //BOD=2.7V
 	.extended = 0xFF //Default
 };
@@ -17,7 +18,7 @@ FUSES =
 #define REGION_US 0b11111010 //SCEA
 #define REGION_JP 0b11011010 //SCEI
 
-#define REGION_SELECTED REGION_PAL //Change here according to your Playstation's region
+#define REGION_SELECTED REGION_PAL //Change here according to your region
 //End Region Definition
 
 #define SCEData0 0b00000010
@@ -26,21 +27,28 @@ FUSES =
 #define SCEData4 0b11001001
 #define SCEData5 0b01011001
 
-//#define SCEEData1 0b11101010
-//#define SCEAData1 0b11111010
-//#define SCEIData1 0b11011010
-
-//Pin definitions
-#define SQCK DDB0
-#define SUBQ DDB1
-#define DATA DDB2
-#define WFCK DDB4
+#define SQCK B,1
+#define SUBQ B,0
+#define DATA B,2
+#define WFCK B,3
+#define UNUSED1 B,4
+#define UNUSED2 B,5
 
 #define NUM_WFCK_SAMPLES 5000 //number of times WFCK is sampled
 
-#define SET(x,y) x |= (1 << y)
-#define CLEAR(x,y) x &= ~(1<< y)
-#define READ(x,y) ((0u == (x & (1<<y)))?0u:1u)
+// MACROS FOR EASY PIN HANDLING FOR ATMEL GCC-AVR
+#define _SET(type,name,bit)          type ## name  |= _BV(bit)
+#define _CLEAR(type,name,bit)        type ## name  &= ~ _BV(bit)
+#define _TOGGLE(type,name,bit)       type ## name  ^= _BV(bit)
+#define _GET(type,name,bit)          ((type ## name >> bit) &  1)
+#define _PUT(type,name,bit,value)    type ## name = ( type ## name & ( ~ _BV(bit)) ) | ( ( 1 & (uint8_t)value ) << bit )
+#define OUTPUT(pin)		_SET(DDR,pin)
+#define INPUT(pin)		_CLEAR(DDR,pin)
+#define HIGH(pin)		_SET(PORT,pin)
+#define LOW(pin)		_CLEAR(PORT,pin)
+#define TOGGLE(pin)		_TOGGLE(PORT,pin)
+#define PUT(pin, val)	_PUT(PORT,pin, val)
+#define READ(pin)		_GET(PIN,pin)
 
 // Setup() detects which (of 2) injection methods this PSX board requires, then stores it in pu22mode.
 uint8_t pu22mode;
@@ -57,56 +65,44 @@ uint8_t scpos = 0;           // scbuf position
 #define DELAY_MS_BETWEEN_INJECTIONS 90 //72 in oldcrow. PU-22+ work best with 80 to 100 (milliseconds)
 
 // borrowed from AttyNee. Bitmagic to get to the SCEX strings stored in flash (because Harvard architecture)
-uint8_t regionCodeBit(uint8_t index)//, uint8_t regionData)
+uint8_t regionCodeBit(uint8_t bitIndex)//, uint8_t regionData)
 {
-	//regionCode[1] = regionData;
-	uint8_t bits = regionCode[index >> 3];	//read current byte
-	uint8_t mask = (1 << (index%8));		//shift 1 by position in byte
-	return (0 != (bits & mask));			//read bit in current byte and return it
+	uint8_t thisByte = regionCode[bitIndex >> 3];	//read current byte
+	uint8_t mask = (1 << (bitIndex%8));		//shift 1 by position in byte
+	return (0 != (thisByte & mask));			//read bit in current byte and return it
 }
 
 void inject_SCEX(void)
 {
-	// pinMode(data, OUTPUT) is used more than it has to be but that's fine.
 	for (uint8_t bit_counter = 0; bit_counter < 44; bit_counter++)
 	{
-		if (regionCodeBit(bit_counter) == 0)//, region == 'e' ? SCEEData1 : region == 'a' ? SCEAData1 : SCEIData1) == 0)
+		if (regionCodeBit(bit_counter) == 0)
 		{
-			//pinMode(data, OUTPUT);
-			//DDRB |= (1<<data); //Set data as output
-			SET(DDRB,DATA);
-			CLEAR(PORTB, DATA); // data low
+			OUTPUT(DATA); //Set DATA as output
+			LOW(DATA); //Set DATA low
+			_delay_us(DELAY_US_BETWEEN_BITS);
 		}
 		else
 		{
 			if (pu22mode) {
-				//pinMode(data, OUTPUT);
-				//DDRB |= (1<<data); //Set data as output
-				SET(DDRB,DATA);
-				//uint32_t now = micros();
-				//uint8_t wfck_sample = READ(PINB, WFCK);
-				//bitWrite(DATAPORT, DATABIT, wfck_sample); // output wfck signal on data pin
-				if(READ(PINB, WFCK)){
-					SET(PORTB, DATA);
-				}else{
-					CLEAR(PORTB, DATA);
+				OUTPUT(DATA); //Set DATA as output and copy WFCK to DATA for DELAY_US_BETWEEN_BITS
+				for(uint16_t repeater = 0; repeater <= ((uint16_t)(DELAY_US_BETWEEN_BITS/1.14)); repeater++){
+					if(READ(WFCK)){
+						HIGH(DATA);
+					}else{
+						LOW(DATA);
+					}
 				}
-
-				//while ((micros() - now) < delay_between_bits);
-				
 			}
-			else { // PU-18 or lower mode
-				//pinMode(data, INPUT);
-				CLEAR(DDRB,DATA);
+			else { //PU-18 or lower mode
+				INPUT(DATA);
+				_delay_us(DELAY_US_BETWEEN_BITS);
 			}
 		}
-		_delay_us(DELAY_US_BETWEEN_BITS);
 	}
+	OUTPUT(DATA); //Set DATA as output
+	LOW(DATA);
 
-	//pinMode(data, OUTPUT);
-	//DDRB |= (1<<data); //Set data as output
-	SET(DDRB,DATA);
-	CLEAR(PORTB, DATA); // pull data low
 	_delay_ms(DELAY_MS_BETWEEN_INJECTIONS);
 }
 
@@ -119,7 +115,7 @@ int main(void)
 	cli(); //Disable interrupts globally
 		//Setting clock to 8 MHz, regardless of CKDIV8 fuse setting
 		CLKPR = (1<<CLKPCE); //Enable changing of clock prescaler
-		CLKPR = (0<<CLKPS3)|(0<<CLKPS2)|(0<<CLKPS1)|(0<<CLKPS0); //Prescaler 1 ==> 8 MHz
+		CLKPR = (0<<CLKPS3)|(0<<CLKPS2)|(0<<CLKPS1)|(0<<CLKPS0); //Prescaler 1
 	
 		//Power reduction setup
 		PRR = (1<<PRTIM1)|(1<<PRTIM0)|(1<<PRUSI)|(1<<PRADC); //Disable Timer1, Timer0, USI, ADC
@@ -128,40 +124,42 @@ int main(void)
 		ACSR = (1<<ACD); //Disable analog comparator
 	sei(); //Enable interrupts globally
 	
-	//pinMode(data, INPUT);
-	//CLEAR(DDRB,DATA);
-	//pinMode(gate_wfck, INPUT);
-	//CLEAR(DDRB,WFCK);
-	//pinMode(subq, INPUT); // PSX subchannel bits
-	//CLEAR(DDRB,SUBQ);
-	//pinMode(sqck, INPUT); // PSX subchannel clock
-	//CLEAR(DDRB,SQCK);
+	
+	//DDRB &= ~(63); //All pins inputs
+	//PORTB |= (63); //All pins pullups
+	INPUT(SQCK);	//make input
+	INPUT(SUBQ);	//make input
+	INPUT(DATA);	//make input
+	INPUT(WFCK);	//make input
+	INPUT(UNUSED1);
+	HIGH(UNUSED1);
+	INPUT(UNUSED2);
+	HIGH(UNUSED2);
 
 	// wait for console power on and stable signals
-	while (!READ(PINB,SQCK));
-	while (!READ(PINB,WFCK));
-	//while (!READ(PINB,WFCK));	
-	//while (!digitalRead(gate_wfck));
+	while (!READ(WFCK));
+	while (!READ(SQCK));
 	
 	// Board detection
-	//
 	// GATE: __-----------------------  // this is a PU-7 .. PU-20 board!
-	//
 	// WFCK: __-_-_-_-_-_-_-_-_-_-_-_-  // this is a PU-22 or newer board!
 	
 	uint8_t lows = 0;
-	for(uint16_t i = 0; i < NUM_WFCK_SAMPLES; i++) {
-		if (!READ(PINB,WFCK)){
+	pu22mode = 0;
+	for(uint16_t i = 0; i < NUM_WFCK_SAMPLES; i++) { //Sample up to NUM_WFCK_SAMPLES times
+		//if (!READ(PINB,WFCK)){
+		if (!READ(WFCK)){
 			lows++;
-			if(lows > 200){
-				lows = 200;
+			if(lows > 250){ //If WFCK was low more than 250 times, assume PU-22 and break loop
+				pu22mode = 1;
+				break;
 			}
 		}
-		_delay_us(199);   // good for 5000 reads in ~1s
+		_delay_us(198);   // good for 5000 reads in ~1s
 	}
 	// typical readouts
 	// PU-22: highs: 2449 lows: 2377
-	pu22mode = (lows > 100); //pu22mode if lows >100
+	//pu22mode = (lows > 100); //pu22mode if lows >100
 
 	while (1){
 		scpos = 0;           // scbuf position
@@ -176,7 +174,8 @@ int main(void)
 		// Capture 8 bits for 12 runs > complete SUBQ transmission
 		bitpos = 0;
 		for (; bitpos < 8; bitpos++) {
-			while (READ(PINB, SQCK)) {
+			//while (READ(PINB, SQCK)) {
+			while (READ(SQCK)) {
 				// wait for clock to go low..
 				// a timeout resets the 12 byte stream in case the PSX sends malformatted clock pulses, as happens on bootup
 				
@@ -191,11 +190,9 @@ int main(void)
 			}
 
 			// wait for clock to go high..
-			while (!READ(PINB, SQCK));
+			while (!READ(SQCK));
 
-			//sample = READ(PINB, SUBQ);
-			bitbuf |= (READ(PINB, SUBQ) << bitpos);
-
+			bitbuf |= (READ(SUBQ) << bitpos);
 			timeout_clock_counter = 0; // no problem with this bit
 		}
 
@@ -219,7 +216,7 @@ int main(void)
 		// While the laser lens moves to correct for the error, they can pick up a few TOC sectors.
 		static uint8_t hysteresis  = 0;
 		//uint8_t isDataSector = (((scbuf[0] & 0x40) == 0x40) && (((scbuf[0] & 0x10) == 0) && ((scbuf[0] & 0x80) == 0)));
-		uint8_t isDataSector = ((scbuf[0] & 0xD0) == 0x40);
+		uint8_t isDataSector = ((scbuf[0] & 0xD0) == 0x40); //should be the same as line above
 	
 		//if (
 		//(isDataSector &&  !scbuf[1] &&  !scbuf[6]) &&   // [0] = 41 means psx game disk. the other 2 checks are garbage protection
@@ -252,16 +249,11 @@ int main(void)
 			// Hysteresis naturally goes to 0 otherwise (the read head moved).
 			hysteresis = 11;
 
-			//pinMode(data, OUTPUT);
-			//DDRB |= (1<<data); //Set data as output
-			SET(DDRB,DATA);
-			//digitalWrite(data, 0); // pull data low
-			CLEAR(PORTB, DATA);
+			OUTPUT(DATA); //Set DATA as output
+			LOW(DATA); //Set DATA low
 			if (!pu22mode) {
-				//pinMode(gate_wfck, OUTPUT);
-				SET(DDRB,WFCK);
-				//digitalWrite(gate_wfck, 0);
-				CLEAR(PORTB, WFCK);
+				OUTPUT(WFCK); //Set WFCK as output
+				LOW(WFCK); //Set WFCK low
 			}
 
 			// HC-05 waits for a bit of silence (pin low) before it begins decoding.
@@ -273,11 +265,9 @@ int main(void)
 			}
 
 			if (!pu22mode) {
-				//pinMode(gate_wfck, INPUT);
-				CLEAR(DDRB,WFCK);
+				INPUT(WFCK); //Set WFCK as input
 			}
-			//pinMode(data, INPUT); // high-z the line, we're done
-			CLEAR(DDRB,DATA);
+			INPUT(DATA); //Set DATA as input
 		}
 		// keep catching SUBQ packets forever
 	}
