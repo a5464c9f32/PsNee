@@ -1,4 +1,6 @@
-#define F_CPU 4166667UL
+#define F_CPU 4190000UL
+//#define F_CPU 8000000UL
+//CHECK FREQUENCY!
 
 #include <avr/signature.h>
 #include <avr/fuse.h>
@@ -9,25 +11,47 @@
 
 FUSES =
 {
-	.low = 0xE0,		//External clock, slow start-up, clock NOT divided
+	.low = 0xE0,		//e0 External clock, slow start-up, clock NOT divided
 	.high = 0xCD,		//BOD=2.7V, Watchdog always on //value=0x4D for BOD=2.7V, Watchdog always on AND RESET DISABLE
 	.extended = 0xFF,	//Default, Self Programming Disabled
 };
 
 //Region Definition
-#define REGION_EU	0b11101010		//SCEE - EU
-#define REGION_US	0b11111010		//SCEA - US
-#define REGION_JP	0b11011010		//SCEI - JP
-#define SCEData0	0b00000010
-#define SCEData2	0b01011101
-#define SCEData3	0b01001011
-#define SCEData4	0b11001001
-#define SCEData5	0b01011001
+//#define REGION_EU	0b11101010
+//#define REGION_US	0b11111010
+//#define REGION_JP	0b11011010
+#define REGION_EU 0
+#define REGION_US 1
+#define REGION_JP 2
+//#define SCEData0	0b00000010
+//#define SCEData2	0b01011101
+//#define SCEData3	0b01001011
+//#define SCEData4	0b11001001
+//#define SCEData5	0b01011001
 
 #define REGION_SELECTED REGION_EU	//Change here according to your region
 
+#if REGION_SELECTED == REGION_EU
+#define REGION_BIT_0	0
+#define REGION_BIT_1	1
+#elif REGION_SELECTED == REGION_US
+#define REGION_BIT_0	1
+#define REGION_BIT_1	1
+#elif REGION_SELECTED == REGION_JP
+#define REGION_BIT_0	1
+#define REGION_BIT_1	0
+#endif
+
 //regionCode array stores data that is injected to fake an original disk
-uint8_t regionCode[] = {SCEData5, SCEData4, SCEData3, SCEData2, REGION_SELECTED, SCEData0};
+//uint8_t regionCode[] = {SCEData5, SCEData4, SCEData3, SCEData2, REGION_SELECTED, SCEData0};
+uint8_t regionCodeArray[44] = {
+	1,0,0,1,1,0,1,0,
+	1,0,0,1,0,0,1,1,
+	1,1,0,1,0,0,1,0,
+	1,0,1,1,1,0,1,0,
+	0,1,0,1,REGION_BIT_0,REGION_BIT_1,1,1,
+	0,1,0,0
+};
 
 //Pin Definition
 #define DATA	0
@@ -48,15 +72,30 @@ uint8_t regionCode[] = {SCEData5, SCEData4, SCEData3, SCEData2, REGION_SELECTED,
 #define READ(bit)		((PINB >> bit)&1)
 
 //Timing
-#define MICROSECONDS_TO_TIMER_TICKS(MICROS) ((MICROS*(F_CPU/256))/1000000)
-#define US_BETWEEN_BITS 4000						//Time for each bit that is injected
-#define US_BETWEEN_INJECTIONS 90000					//72ms in oldcrow. PU-22+ work best with 80 to 100ms
-#define US_SUBQ_TIMEOUT 320							//Inactivity time period after which packet counter is reset
-#define NUMBER_OF_INJECTIONS 3						//If we start to inject, how often?
-#define NUMBER_OF_BYTES_IN_PACKET 12				//How many bytes make up a packet?
+#define MICROSECONDS_TO_TIMER_TICKS(MICROS)	((MICROS*(F_CPU/256))/1000000)
+#define US_BETWEEN_BITS 4000								//Time for each bit that is injected
+#define US_SUBQ_TIMEOUT 320									//Inactivity time period after which packet counter is reset
+#define US_BETWEEN_INJECTIONS 90000							//72ms in oldcrow. PU-22+ work best with 80 to 100ms
+#define NUMBER_OF_INJECTIONS 3								//If we start to inject, how often?
+#define NUMBER_OF_BYTES_IN_PACKET 12						//How many bytes make up a packet?
+#define NUMBER_OF_LOW_SAMPLES F_CPU/3200					//How often to sample the high state of WFCK before stopping
+#define NUMBER_OF_HIGH_SAMPLES (NUMBER_OF_LOW_SAMPLES*10)	//How often to sample the high state of WFCK before stopping
+#define HYSTERESIS_THRESHOLD 14
+
+#if MICROSECONDS_TO_TIMER_TICKS(US_BETWEEN_BITS) > 255
+#error Value of US_BETWEEN_BITS too large
+#endif
+#if MICROSECONDS_TO_TIMER_TICKS(US_SUBQ_TIMEOUT) > 255
+#error Value of US_SUBQ_TIMEOUT too large
+#endif
+#if NUMBER_OF_LOW_SAMPLES > 65535
+#error Value of NUMBER_OF_LOW_SAMPLES too large
+#endif
+#if NUMBER_OF_HIGH_SAMPLES > 65535
+#error Value of NUMBER_OF_HIGH_SAMPLES too large
+#endif
 
 uint8_t pu22mode = 0;								//Variable to keep track of if board is either PU-22 or older revision
-
 uint8_t scbuf[NUMBER_OF_BYTES_IN_PACKET] = { 0 };	//Will be storing SUBQ packets
 uint8_t bitbuf[8] = { 0 };							//SUBQ bit storage
 uint8_t scpos = 0;									//scbuf position
@@ -67,12 +106,12 @@ uint8_t hysteresis = 0;								//Hysteresis counter for injecting region codes
 //     at position "bitIndex", across bytes
 //--------------------------------------------------
 
-uint8_t regionCodeBit(uint8_t bitIndex)
-{
-	uint8_t thisByte = regionCode[bitIndex >> 3];	//bitIndex divided by 8 returns the byte in which bitIndex is located
-	uint8_t mask = (1 << (bitIndex%8));				//bitIndex modulo 8 returns the location of bitIndex inside the current byte
-	return (0 != (thisByte & mask));				//Read only the bit selected by bitIndex and return a "boolean"
-}
+//uint8_t regionCodeBit(uint8_t bitIndex)
+//{
+//	uint8_t thisByte = regionCode[bitIndex >> 3];	//bitIndex divided by 8 returns the byte in which bitIndex is located
+//	uint8_t mask = (1 << (bitIndex%8));				//bitIndex modulo 8 returns the location of bitIndex inside the current byte
+//	return (0 != (thisByte & mask));				//Read only the bit selected by bitIndex and return a "boolean"
+//}
 
 //--------------------------------------------------
 //     Function to inject SCEX data
@@ -84,20 +123,20 @@ void inject_SCEX(void)
 	{
 		TCNT0 = 0;			//Reset counter to measure time
 		while(TCNT0 <= MICROSECONDS_TO_TIMER_TICKS(US_BETWEEN_BITS)){
-			if (!regionCodeBit(bit_counter)){
-				OUTPUT(DATA); //Set DATA as output
-				LOW(DATA); //Set DATA low
-			}else{
+			if (regionCodeArray[bit_counter]){//regionCodeBit(bit_counter)){
 				if (pu22mode){
 					OUTPUT(DATA); //Set DATA as output and copy WFCK to DATA
 					if(READ(WFCK)){
 						HIGH(DATA);
-					}else{
+						}else{
 						LOW(DATA);
 					}
-				}else{ //PU-18 or lower mode
+					}else{ //PU-18 or lower mode
 					INPUT(DATA);
 				}
+				}else{
+				OUTPUT(DATA); //Set DATA as output
+				LOW(DATA); //Set DATA low
 			}
 		}
 	}
@@ -114,6 +153,8 @@ int main(void)
 	cli(); //Disable interrupts globally
 	
 	//Clock speed is defined by CLKI
+	CLKPR = (1<<CLKPCE); //Enable changing of clock prescaler
+	CLKPR = (0<<CLKPS3)|(0<<CLKPS2)|(0<<CLKPS1)|(0<<CLKPS0); //Prescaler 1
 
 	//Watchdog setup
 	wdt_enable(WDTO_2S);	//Timout=2s, Action=reset
@@ -135,6 +176,7 @@ int main(void)
 	INPUT(SUBQ);	//make input
 	INPUT(DATA);	//make input
 	INPUT(WFCK);	//make input
+	INPUT(CLKI);	//make input
 	INPUT(RESET);	//make input
 	HIGH(RESET);	//enable pullup
 
@@ -147,16 +189,13 @@ int main(void)
 	// WFCK: __-_-_-_-_-_-_-_-_-_-_-_-  // this is a PU-22 or newer board!
 	uint16_t lows = 0;
 	uint16_t highs = 0;
-	while(highs < (F_CPU/320)) {		//If WFCK was high a lot, assume not PU-22
+	while(highs < NUMBER_OF_HIGH_SAMPLES) {		//If WFCK was high a lot, assume not PU-22
 		if (READ(WFCK)){
 			highs++;					//Increment high counter
 			pu22mode = 0;
 		}else{
 			lows++;						//Increment low counter
-			if(highs > 0){
-				highs--;				//Just to be sure that a low weighs more than a high, decrement high counter
-			}
-			if(lows >= (F_CPU/3200)){	//If WFCK was low often enough, assume PU-22 and break loop
+			if(lows >= NUMBER_OF_LOW_SAMPLES){	//If WFCK was low often enough, assume PU-22 and break loop
 				pu22mode = 1;
 				break;
 			}
@@ -166,7 +205,6 @@ int main(void)
 	
 	//Main loop
 	while(1){
-		
 		start:
 		wdt_reset();	//Reset Watchdog, to show that we are still alive
 		scpos = 0;		//reset SUBQ packet position
@@ -176,23 +214,25 @@ int main(void)
 				
 				TCNT0 = 0;
 				while (READ(SQCK)) {	//Wait for clock to go low
-					//Timeout resets capture buring bootup and in between packages
+					//Timeout resets capture during bootup and in between packages
 					if (TCNT0 >= MICROSECONDS_TO_TIMER_TICKS(US_SUBQ_TIMEOUT)){
 						goto start;
 					}
 				}
+
 				while (!READ(SQCK));	//Wait for clock to go high
-				
+
 				bitbuf[bitpos] = READ(SUBQ);
 			}
+			//8 bits read, not combining them into byte storage		
 			scbuf[scpos] = bitbuf[0];
 			for (uint8_t bitpos = 1; bitpos < 8; bitpos++) {
 				scbuf[scpos] |= (bitbuf[bitpos] << bitpos);
 			}
-			//byte done
 			scpos++;
+			
+			
 		}
-		
 		// check if read head is in wobble area
 		// We only want to unlock game discs (0x41) and only if the read head is in the outer TOC area.
 		// We want to see a TOC sector repeatedly before injecting (helps with timing and marginal lasers).
@@ -216,10 +256,10 @@ int main(void)
 
 		// hysteresis value "optimized" using very worn but working drive on ATmega328 @ 16Mhz
 		// should be fine on other MCUs and speeds, as the PSX dictates SUBQ rate
-		if(hysteresis >= 14){
+		if(hysteresis >= HYSTERESIS_THRESHOLD){
 			// If the read head is still here after injection, resending should be quick.
 			// Hysteresis naturally goes to 0 otherwise (the read head moved).
-			hysteresis = 11;
+			hysteresis = HYSTERESIS_THRESHOLD-3;
 
 			OUTPUT(DATA);		//Set DATA as output
 			LOW(DATA);			//Set DATA low
@@ -232,7 +272,6 @@ int main(void)
 			// inject symbols now
 			for(uint8_t injection_counter = 0; injection_counter < NUMBER_OF_INJECTIONS; injection_counter++)
 			{
-				//wdt_reset();						//Reset Watchdog, to show that we are still alive
 				inject_SCEX();						//Injection
 				_delay_us(US_BETWEEN_INJECTIONS);	//Delay between injections
 			}
@@ -242,7 +281,7 @@ int main(void)
 			}
 
 			INPUT(DATA); 		//Set DATA as input
-		}else{
+			}else{
 			//small delay, which can be necessary in case the MCU loops too quickly
 			//and picks up SUBQ trailing end
 			//INVESTIGATE!
